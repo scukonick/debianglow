@@ -1,0 +1,8 @@
+Package: *
+Pin: release l=packages.dotdeb.org
+Pin-Priority: 800
+
+Package: *
+Pin: release o=Debian,a=stable,n=wheezy
+Pin-Priority: 900
+
