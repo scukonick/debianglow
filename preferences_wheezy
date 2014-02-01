@@ -6,3 +6,13 @@ Package: *
 Pin: release o=Debian,a=stable,n=wheezy
 Pin-Priority: 900
 
+# RabbitMQ
+Package: rabbitmq-server
+Pin: release o=RabbitMQ,a=testing
+Pin-Priority: 950
+
+# PostgreSQL
+Package: postgresql-9.3*
+Pin: release o=apt.postgresql.org,a=wheezy-pgdg
+Pin-Priority: 950
+
