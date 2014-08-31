@@ -1,0 +1,154 @@
+#!/bin/bash
+# Example:
+# backup_filesystem_inc /etc 20 1 3 1 ,
+
+
+# Директория, которую бэкапить
+DIR=$1
+# Сколько дней хранить бэкапы локально
+DAYS=$2
+# Еженедельный или ежемесячный полный бэкап (1 - еженедельный, 0 - ежемесячный)
+WEEKLY=$3
+# День полного бэкапа
+FULLBACKUPDAY=$4
+# Гзипить ли (1 или 0)
+GZIP=$5
+if [ $GZIP -eq 1 ]; then
+	BACKUP_EXTENSION=tgz
+	TAR_PARAM="-czpf"
+else
+	BACKUP_EXTENSION=tar
+	TAR_PARAM="-cpf"
+fi
+# Обработка исключений
+EXCLUDES=$6
+for PARAM in $(echo $EXCLUDES | tr , " ");do
+	TAR_PARAM="--exclude=$PARAM $TAR_PARAM "
+done
+# Куда класть локальные бэкапы
+BACKUP_DIR=/var/backups
+# Заменяем слэши на подчёркивания
+BACKUP_FILE=`echo $DIR | tr -s '/' '_'`
+# Имя ежедневного бэкапа
+BACKUP=${BACKUP_DIR}/${BACKUP_FILE}_`date +%F`.${BACKUP_EXTENSION}
+# Имя полного бэкапа
+FULLBACKUP=${BACKUP_DIR}/${BACKUP_FILE}_`date +%F`_full.${BACKUP_EXTENSION}
+# Имя списка файлов
+LIST="${BACKUP_DIR}/${BACKUP_FILE}_list"
+# Имя pid-файла
+PIDFILE=/var/run/${BACKUP_FILE}_backup.pid
+# Лог-файл
+LOG=/var/tmp/backup${BACKUP_FILE}.log
+# Бэкап сервер
+BSERVER=BACKUPSERVERNAME
+
+DOM=`date +%d`
+DOW=`date +%u`
+DATE=`date +%F`
+FQDN=$(hostname --fqdn)
+
+
+# At first, we need sleep some time to decrease connections to backup server
+let "SLEEP = $RANDOM % 7200"
+
+
+# Проверяем наличие директории
+check_dir()
+{
+	mkdir -p $BACKUP_DIR
+	#TODO - create ftp directory
+        mkdir /tmp/$FQDN
+        #rsync -a /tmp/$FQDN ${BSERVER}::backups
+        rmdir /tmp/$FQDN
+
+}
+
+check_pid()
+{
+        #check if pid exists
+        PID=$$
+        if [ -e $PIDFILE ];then
+                OLDPID=`cat $PIDFILE`
+                ps -p $OLDPID &> /dev/null
+                OLD_IS_RUNNING=$?
+                if [ $PID -ne $OLDPID -a $OLD_IS_RUNNING -eq 0 ];then
+                        echo "Old process with $OLDPID is running, exiting.." >> $LOG 2>&1
+                        exit 1
+                fi
+        fi
+        echo $PID > $PIDFILE
+}
+delete_pid()
+{
+        rm -f $PIDFILE
+        exit 0
+}
+send_backup()
+{
+	#rsync $BACKUP ${BSERVER}::backups/${FQDN}
+	#check_rsync
+	echo 0 > /dev/null
+}
+full_backup ()
+{
+	# Храним на сервере только 1 полный бэкап
+	#find $BACKUP_DIR -maxdepth 1 -name ${BACKUP_FILE}\*_full.${BACKUP_EXTENSION} -delete
+	if [ -e $LIST ];then
+		rm -f $LIST
+	fi
+	echo "Taring.." >> $LOG 2>&1
+	echo "Command is: tar  $TAR_PARAM $FULLBACKUP -g $LIST $DIR" >> $LOG 2>&1
+	tar  $TAR_PARAM $FULLBACKUP -g $LIST $DIR >> $LOG 2>&1
+	check_tar
+	BACKUP=$FULLBACKUP
+	send_backup
+}
+daily_backup ()
+{
+	if [ -e $LIST ]; then
+		echo "Taring.." >> $LOG 2>&1
+		echo "Command is: tar  $TAR_PARAM $BACKUP -g ${LIST} $DIR" >> $LOG 2>&1
+		tar  $TAR_PARAM $BACKUP -g ${LIST} $DIR >> $LOG 2>&1
+		check_tar
+		send_backup 
+	else 
+		echo "No list found, creating full backup." >> $LOG 2>&1
+		full_backup
+	fi
+}
+check_tar()
+{
+	[ $? -eq 2 ] && echo "Tar of $DIR failed on $FQDN" | mail -s "Really failed backup" root
+}
+check_rsync()
+{
+	[ $? -ne 0 ] && echo "Rsync of $DIR failed on $FQDN" | mail -s "Really failed backup" root
+}
+
+check_dir
+check_pid
+# Заранее удаляем все старые бэкапы
+echo "Deleting old backups.." >> $LOG 2>&1
+echo "Command is: find ${BACKUP_DIR} -maxdepth 1 -name ${BACKUP_FILE}\*${BACKUP_EXTENSION} -mtime +${DAYS} -delete" >> $LOG 2>&1
+find ${BACKUP_DIR} -maxdepth 1 -name ${BACKUP_FILE}\*${BACKUP_EXTENSION} -mtime +${DAYS} -delete
+
+# Fix illegal fullbackupdays
+if [ $FULLBACKUPDAY -gt 28 -o $FULLBACKUPDAY -lt 1 ]; then
+	FULLBACKUPDAY=1;
+fi
+if [ $WEEKLY -eq 1 ]; then
+	if [ $FULLBACKUPDAY -gt 7 ];then
+		let FULLBACKUPDAY=$FULLBACKUPDAY%7+1
+	fi
+	OUR_DAY=$DOW;
+else
+	OUR_DAY=$DOM;
+fi
+if [ $OUR_DAY -eq $FULLBACKUPDAY ]; then
+	echo "${DATE}: Full backup" >> $LOG 2>&1
+	full_backup
+else
+	echo "${DATE}: Daily backup" >> $LOG 2>&1
+	daily_backup
+fi
+delete_pid
