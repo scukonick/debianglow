@@ -1,0 +1,9 @@
+#!/bin/bash
+
+DIR=/var/backups/postgres/daily
+mkdir -p $DIR
+cd $DIR
+chown -R postgres /var/backups/postgres
+
+sudo -u postgres pg_dumpall | gzip  > $DIR/pg.`date +%F`.gz
+find $DIR -mtime +3 -delete
